@@ -1,7 +1,55 @@
+# ── binaries ─────────────────────────────────────────────────────────────────
 bin/
 *.exe
+*.dll
+*.so
+*.dylib
+
+# ── go build cache ───────────────────────────────────────────────────────────
+*.test
+*.out
+vendor/
+
+# ── tls / certs ──────────────────────────────────────────────────────────────
 *.pem
 *.key
+*.crt
+*.csr
+*.p12
+*.pfx
+certs/
+
+# ── config files with secrets ────────────────────────────────────────────────
 server.yaml
 !server.yaml.example
+.env
+.env.*
+
+# ── client config ────────────────────────────────────────────────────────────
+# (personal config lives at ~/.tunnel/config.yaml, not in the repo)
+
+# ── os junk ──────────────────────────────────────────────────────────────────
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ── editors ──────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# ── logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── docker volumes mounted locally ───────────────────────────────────────────
+data/
