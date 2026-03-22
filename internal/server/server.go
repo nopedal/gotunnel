@@ -1,0 +1,392 @@
+package server
+
+import (
+	"bufio"
+	"context"
+	"crypto/subtle"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/hashicorp/yamux"
+	"github.com/rs/zerolog"
+	"golang.org/x/crypto/acme/autocert"
+	"golang.org/x/time/rate"
+
+	"github.com/gotunnel/tunnel/internal/proto"
+	tunnelpkg "github.com/gotunnel/tunnel/internal/tunnel"
+)
+
+// Server is the tunnel server.
+type Server struct {
+	cfg      *Config
+	log      zerolog.Logger
+	registry *tunnelpkg.Registry
+
+	rateMu    sync.Mutex
+	rateLimit map[string]*rate.Limiter
+}
+
+// New creates a new tunnel server.
+func New(cfg *Config, log zerolog.Logger) *Server {
+	return &Server{
+		cfg:       cfg,
+		log:       log,
+		registry:  tunnelpkg.NewRegistry(),
+		rateLimit: make(map[string]*rate.Limiter),
+	}
+}
+
+// Run starts all listeners and blocks until the context is cancelled.
+func (s *Server) Run(ctx context.Context) error {
+	errCh := make(chan error, 3)
+
+	go func() { errCh <- s.listenControl(ctx) }()
+	go func() { errCh <- s.listenHTTP(ctx) }()
+
+	if s.cfg.TLSEnabled {
+		go func() { errCh <- s.listenHTTPS(ctx) }()
+	}
+
+	s.log.Info().
+		Str("domain", s.cfg.Domain).
+		Int("control_port", s.cfg.ControlPort).
+		Int("http_port", s.cfg.HTTPPort).
+		Int("https_port", s.cfg.HTTPSPort).
+		Bool("tls", s.cfg.TLSEnabled).
+		Msg("tunnel server started")
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Server) listenControl(ctx context.Context) error {
+	addr := fmt.Sprintf(":%d", s.cfg.ControlPort)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("control listen: %w", err)
+	}
+	defer ln.Close()
+
+	s.log.Info().Str("addr", addr).Msg("control listener ready")
+
+	go func() {
+		<-ctx.Done()
+		ln.Close()
+	}()
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return nil
+			default:
+				s.log.Error().Err(err).Msg("control accept error")
+				continue
+			}
+		}
+		go s.handleControl(ctx, conn)
+	}
+}
+
+func (s *Server) getLimiter(ip string) *rate.Limiter {
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+	if lim, ok := s.rateLimit[ip]; ok {
+		return lim
+	}
+	lim := rate.NewLimiter(rate.Every(12*time.Second), 5)
+	s.rateLimit[ip] = lim
+	return lim
+}
+
+func (s *Server) handleControl(_ context.Context, conn net.Conn) {
+	remoteIP := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+
+	if !s.getLimiter(remoteIP).Allow() {
+		s.log.Warn().Str("ip", remoteIP).Msg("rate limited")
+		conn.Close()
+		return
+	}
+
+	if s.registry.Count() >= s.cfg.MaxClients {
+		s.log.Warn().Str("ip", remoteIP).Msg("max clients reached")
+		conn.Close()
+		return
+	}
+
+	session, err := yamux.Server(conn, tunnelpkg.YamuxConfig())
+	if err != nil {
+		s.log.Error().Err(err).Str("ip", remoteIP).Msg("yamux session error")
+		conn.Close()
+		return
+	}
+
+	// Accept the control stream (stream 0)
+	ctrlStream, err := session.Accept()
+	if err != nil {
+		s.log.Error().Err(err).Str("ip", remoteIP).Msg("accept control stream")
+		session.Close()
+		return
+	}
+
+	// Authenticate
+	msgType, data, err := proto.ReadMessage(ctrlStream)
+	if err != nil || msgType != proto.TypeAuthRequest {
+		s.log.Warn().Str("ip", remoteIP).Msg("invalid auth message")
+		session.Close()
+		return
+	}
+
+	var authReq proto.AuthRequest
+	if err := proto.Decode(data, &authReq); err != nil {
+		session.Close()
+		return
+	}
+
+	if subtle.ConstantTimeCompare([]byte(authReq.Token), []byte(s.cfg.Token)) != 1 {
+		proto.WriteMessage(ctrlStream, proto.TypeAuthResponse, &proto.AuthResponse{
+			OK: false, Error: "invalid token",
+		})
+		s.log.Warn().Str("ip", remoteIP).Msg("auth failed")
+		session.Close()
+		return
+	}
+
+	proto.WriteMessage(ctrlStream, proto.TypeAuthResponse, &proto.AuthResponse{OK: true})
+	s.log.Info().Str("ip", remoteIP).Msg("client authenticated")
+
+	// Read tunnel request
+	msgType, data, err = proto.ReadMessage(ctrlStream)
+	if err != nil || msgType != proto.TypeTunnelRequest {
+		session.Close()
+		return
+	}
+
+	var tunReq proto.TunnelRequest
+	if err := proto.Decode(data, &tunReq); err != nil {
+		session.Close()
+		return
+	}
+
+	subdomain := tunReq.Subdomain
+	if subdomain == "" {
+		subdomain = tunnelpkg.GenerateSlug()
+	}
+
+	tun := &tunnelpkg.Tunnel{
+		ID:        subdomain,
+		Subdomain: subdomain,
+		Mode:      tunReq.Mode,
+		Session:   session,
+		CreatedAt: time.Now(),
+		RemoteIP:  remoteIP,
+	}
+
+	if err := s.registry.Register(tun); err != nil {
+		proto.WriteMessage(ctrlStream, proto.TypeTunnelResponse, &proto.TunnelResponse{
+			OK: false, Error: err.Error(),
+		})
+		session.Close()
+		return
+	}
+
+	scheme := "http"
+	if s.cfg.TLSEnabled {
+		scheme = "https"
+	}
+	publicURL := fmt.Sprintf("%s://%s.%s", scheme, subdomain, s.cfg.Domain)
+
+	proto.WriteMessage(ctrlStream, proto.TypeTunnelResponse, &proto.TunnelResponse{
+		OK: true, URL: publicURL, Subdomain: subdomain,
+	})
+
+	s.log.Info().
+		Str("subdomain", subdomain).
+		Str("url", publicURL).
+		Str("mode", tunReq.Mode).
+		Str("ip", remoteIP).
+		Msg("tunnel established")
+
+	// Watch for session close
+	go func() {
+		<-session.CloseChan()
+		s.registry.Deregister(subdomain)
+		s.log.Info().Str("subdomain", subdomain).Str("ip", remoteIP).Msg("tunnel closed")
+	}()
+}
+
+func (s *Server) listenHTTP(ctx context.Context) error {
+	addr := fmt.Sprintf(":%d", s.cfg.HTTPPort)
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      s.httpHandler(),
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		srv.Shutdown(context.Background())
+	}()
+	s.log.Info().Str("addr", addr).Msg("http listener ready")
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) listenHTTPS(ctx context.Context) error {
+	m := &autocert.Manager{
+		Prompt: autocert.AcceptTOS,
+		Cache:  autocert.DirCache(s.cfg.CertDir),
+		HostPolicy: func(_ context.Context, host string) error {
+			if !strings.HasSuffix(host, "."+s.cfg.Domain) && host != s.cfg.Domain {
+				return fmt.Errorf("host %q not allowed", host)
+			}
+			return nil
+		},
+	}
+
+	addr := fmt.Sprintf(":%d", s.cfg.HTTPSPort)
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: s.httpHandler(),
+		TLSConfig: &tls.Config{
+			GetCertificate: m.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		},
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		srv.Shutdown(context.Background())
+	}()
+	s.log.Info().Str("addr", addr).Msg("https listener ready")
+	if err := srv.ListenAndServeTLS("", ""); err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) httpHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+
+		// API endpoints on bare domain
+		if host == s.cfg.Domain {
+			switch r.URL.Path {
+			case "/health":
+				s.handleHealth(w, r)
+			case "/api/tunnels":
+				s.handleAPITunnels(w, r)
+			default:
+				http.Error(w, "not found", http.StatusNotFound)
+			}
+			return
+		}
+
+		// Extract subdomain
+		subdomain := strings.TrimSuffix(host, "."+s.cfg.Domain)
+		if subdomain == host || subdomain == "" {
+			http.Error(w, "invalid host", http.StatusBadRequest)
+			return
+		}
+
+		tun, ok := s.registry.Lookup(subdomain)
+		if !ok {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, "tunnel %q not found — it may have disconnected\n", subdomain)
+			return
+		}
+
+		s.proxyToClient(w, r, tun)
+	})
+}
+
+func (s *Server) proxyToClient(w http.ResponseWriter, r *http.Request, tun *tunnelpkg.Tunnel) {
+	stream, err := tun.Session.Open()
+	if err != nil {
+		s.log.Error().Err(err).Str("subdomain", tun.Subdomain).Msg("open stream failed")
+		http.Error(w, "tunnel unavailable", http.StatusBadGateway)
+		return
+	}
+	defer stream.Close()
+
+	// Forward the HTTP request over the stream
+	if err := r.Write(stream); err != nil {
+		s.log.Error().Err(err).Str("subdomain", tun.Subdomain).Msg("write request to stream")
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
+	}
+
+	// Read the HTTP response from the stream
+	resp, err := http.ReadResponse(bufio.NewReader(stream), r)
+	if err != nil {
+		s.log.Error().Err(err).Str("subdomain", tun.Subdomain).Msg("read response from stream")
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy response headers
+	for k, vv := range resp.Header {
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "ok",
+		"tunnels": s.registry.Count(),
+	})
+}
+
+func (s *Server) handleAPITunnels(w http.ResponseWriter, _ *http.Request) {
+	tunnels := s.registry.List()
+	type info struct {
+		Subdomain string `json:"subdomain"`
+		URL       string `json:"url"`
+		Mode      string `json:"mode"`
+		RemoteIP  string `json:"remote_ip"`
+		CreatedAt string `json:"created_at"`
+	}
+	out := make([]info, 0, len(tunnels))
+	scheme := "http"
+	if s.cfg.TLSEnabled {
+		scheme = "https"
+	}
+	for _, t := range tunnels {
+		out = append(out, info{
+			Subdomain: t.Subdomain,
+			URL:       fmt.Sprintf("%s://%s.%s", scheme, t.Subdomain, s.cfg.Domain),
+			Mode:      t.Mode,
+			RemoteIP:  t.RemoteIP,
+			CreatedAt: t.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"tunnels": out, "count": len(out)})
+}

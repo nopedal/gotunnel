@@ -1,0 +1,17 @@
+services:
+  tunnel-server:
+    build: .
+    container_name: tunnel-server
+    restart: unless-stopped
+    ports:
+      - "7000:7000"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./server.yaml:/etc/tunnel/server.yaml:ro
+      - certs:/var/lib/tunnel/certs
+    environment:
+      - TZ=UTC
+
+volumes:
+  certs:
