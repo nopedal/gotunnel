@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -116,6 +117,23 @@ var nouns = []string{
 	"iris", "jade", "kite", "lens", "mesh", "node", "opus", "peak",
 	"quad", "reef", "sail", "tide", "unit", "volt", "wave", "zone",
 	"axle", "bolt", "core", "dart", "fern", "glow", "helm", "link",
+}
+
+// NormalizeSubdomain lowercases a requested subdomain and checks that it is
+// a single DNS label: 1-63 letters, digits or hyphens, not starting or
+// ending with a hyphen. Hostnames are case-insensitive and browsers send
+// them in lowercase, so tunnels are registered under the lowercase form.
+func NormalizeSubdomain(name string) (string, error) {
+	s := strings.ToLower(name)
+	valid := len(s) >= 1 && len(s) <= 63 && s[0] != '-' && s[len(s)-1] != '-'
+	for i := 0; valid && i < len(s); i++ {
+		c := s[i]
+		valid = c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-'
+	}
+	if !valid {
+		return "", fmt.Errorf("invalid subdomain %q: use 1-63 letters, digits and hyphens, not starting or ending with a hyphen", name)
+	}
+	return s, nil
 }
 
 // GenerateSlug produces a random subdomain like "swift-arch-4f2a".

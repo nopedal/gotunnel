@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/nopedal/gotunnel/internal/client"
+	"github.com/nopedal/gotunnel/internal/tunnel"
 )
 
 var (
@@ -71,6 +72,11 @@ func main() {
 			}
 			if cfg.Port == 0 {
 				return fmt.Errorf("local port required (use --port)")
+			}
+			if cfg.Subdomain != "" {
+				if _, err := tunnel.NormalizeSubdomain(cfg.Subdomain); err != nil {
+					return err
+				}
 			}
 
 			return runConnect(cfg)
