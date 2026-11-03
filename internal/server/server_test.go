@@ -190,3 +190,30 @@ func TestRunReturnsNilOnShutdown(t *testing.T) {
 		t.Fatal("Run did not return after cancellation")
 	}
 }
+
+// The wildcard DNS record points every name under the domain at the server,
+// so the ACME host policy must not request a certificate for arbitrary
+// names: anyone could exhaust the domain's Let's Encrypt quota by sending
+// TLS handshakes with random SNI values.
+func TestCertHostPolicy(t *testing.T) {
+	s := New(&Config{Domain: "tunnel.test", Token: "secret"}, zerolog.Nop())
+	if err := s.registry.Register(&tunnelpkg.Tunnel{Subdomain: "demo"}); err != nil {
+		t.Fatal(err)
+	}
+	policy := s.certManager().HostPolicy
+
+	tests := map[string]bool{
+		"tunnel.test":             true,  // control channel and API
+		"demo.tunnel.test":        true,  // active tunnel
+		"random-name.tunnel.test": false, // no such tunnel
+		"x.demo.tunnel.test":      false,
+		"tunnel.test.evil.com":    false,
+		"example.com":             false,
+	}
+	for host, want := range tests {
+		err := policy(context.Background(), host)
+		if got := err == nil; got != want {
+			t.Errorf("HostPolicy(%q) allowed = %v, want %v (err: %v)", host, got, want, err)
+		}
+	}
+}
