@@ -202,6 +202,12 @@ func (s *Server) handleControl(_ context.Context, conn net.Conn) {
 	subdomain := tunReq.Subdomain
 	if subdomain == "" {
 		subdomain = tunnelpkg.GenerateSlug()
+	} else if subdomain, err = tunnelpkg.NormalizeSubdomain(subdomain); err != nil {
+		proto.WriteMessage(ctrlStream, proto.TypeTunnelResponse, &proto.TunnelResponse{
+			OK: false, Error: err.Error(),
+		})
+		session.Close()
+		return
 	}
 
 	tun := &tunnelpkg.Tunnel{
@@ -322,7 +328,7 @@ func httpsTLSConfig(m *autocert.Manager) *tls.Config {
 
 func (s *Server) httpHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host := r.Host
+		host := strings.ToLower(r.Host)
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h
 		}
