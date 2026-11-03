@@ -261,12 +261,9 @@ func (s *Server) listenHTTPS(ctx context.Context) error {
 
 	addr := fmt.Sprintf(":%d", s.cfg.HTTPSPort)
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: s.httpHandler(),
-		TLSConfig: &tls.Config{
-			GetCertificate: m.GetCertificate,
-			MinVersion:     tls.VersionTLS12,
-		},
+		Addr:         addr,
+		Handler:      s.httpHandler(),
+		TLSConfig:    httpsTLSConfig(m),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		IdleTimeout:  120 * time.Second,
@@ -280,6 +277,16 @@ func (s *Server) listenHTTPS(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// httpsTLSConfig builds the public HTTPS listener's TLS config from
+// m.TLSConfig, which advertises the acme-tls/1 protocol. Without it the
+// tls-alpn-01 challenge handshake is rejected during ALPN negotiation and
+// autocert can never obtain a certificate.
+func httpsTLSConfig(m *autocert.Manager) *tls.Config {
+	cfg := m.TLSConfig()
+	cfg.MinVersion = tls.VersionTLS12
+	return cfg
 }
 
 func (s *Server) httpHandler() http.Handler {
