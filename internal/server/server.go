@@ -324,6 +324,12 @@ func (s *Server) httpHandler() http.Handler {
 			case "/health":
 				s.handleHealth(w, r)
 			case "/api/tunnels":
+				// Lists every client's IP address, so it is not public.
+				if !s.authorized(r) {
+					w.Header().Set("WWW-Authenticate", `Bearer realm="tunnel"`)
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
 				s.handleAPITunnels(w, r)
 			default:
 				http.Error(w, "not found", http.StatusNotFound)
@@ -383,6 +389,12 @@ func (s *Server) proxyToClient(w http.ResponseWriter, r *http.Request, tun *tunn
 	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+// authorized reports whether r carries the server token as a bearer token.
+func (s *Server) authorized(r *http.Request) bool {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) == 1
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

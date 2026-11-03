@@ -114,7 +114,13 @@ The client always uses TLS to reach the server unless `--insecure` (or `insecure
 | Endpoint | Description |
 |---|---|
 | `GET /health` | Server health check |
-| `GET /api/tunnels` | List active tunnels |
+| `GET /api/tunnels` | List active tunnels (requires `Authorization: Bearer <token>`) |
+
+Both endpoints are served on the bare domain. `/api/tunnels` includes each client's IP address, so it needs the server token:
+
+```
+curl -H "Authorization: Bearer $TUNNEL_TOKEN" https://tunnel.yourdomain.com/api/tunnels
+```
 
 ## Building
 

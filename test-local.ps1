@@ -85,14 +85,16 @@ Write-Host ""
 
 $tests = @(
     @{ label = "Server health check    "; url = "http://localhost:8080/health";      host = "localhost"      },
-    @{ label = "Active tunnels API     "; url = "http://localhost:8080/api/tunnels"; host = "localhost"      },
+    @{ label = "Active tunnels API     "; url = "http://localhost:8080/api/tunnels"; host = "localhost"; auth = "Bearer devtoken123" },
     @{ label = "Request through tunnel "; url = "http://localhost:8080/";            host = "demo.localhost"  },
     @{ label = "Unknown subdomain      "; url = "http://localhost:8080/";            host = "ghost.localhost" }
 )
 
 foreach ($t in $tests) {
     try {
-        $result  = Invoke-WebRequest -Uri $t.url -Headers @{ Host = $t.host } -UseBasicParsing -TimeoutSec 5
+        $headers = @{ Host = $t.host }
+        if ($t.auth) { $headers.Authorization = $t.auth }
+        $result  = Invoke-WebRequest -Uri $t.url -Headers $headers -UseBasicParsing -TimeoutSec 5
         $code    = $result.StatusCode
         $color   = if ($code -lt 400) { "Green" } else { "Yellow" }
         $preview = ($result.Content -replace '\s+', ' ').Trim()
