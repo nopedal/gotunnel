@@ -102,7 +102,12 @@ tunnel connect --server tunnel.yourdomain.com --port 5432 --mode tcp
 # Token via environment variable
 export TUNNEL_TOKEN=your-secret-token
 tunnel connect --server tunnel.yourdomain.com --port 3000
+
+# Server running with tls_enabled: false (local development only)
+tunnel connect --server localhost:7000 --port 3000 --insecure
 ```
+
+The client always uses TLS to reach the server unless `--insecure` (or `insecure: true` in `~/.tunnel/config.yaml`) is set. It never falls back to plain TCP on its own.
 
 ## Server API
 

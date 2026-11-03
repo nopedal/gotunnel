@@ -68,8 +68,20 @@ func (c *Client) connectOnce(ctx context.Context) error {
 		addr = addr + ":7000"
 	}
 
-	// Connect with TLS
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
+
+	// Plain TCP only when explicitly requested, for servers running with
+	// tls_enabled: false. Never fall back to it after a failed TLS
+	// handshake: that would send the token in cleartext to whoever made
+	// the handshake fail.
+	if c.cfg.Insecure {
+		conn, err := dialer.DialContext(ctx, "tcp", addr)
+		if err != nil {
+			return fmt.Errorf("connect: %w", err)
+		}
+		return c.runSession(ctx, conn)
+	}
+
 	host := c.cfg.Server
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
@@ -80,14 +92,7 @@ func (c *Client) connectOnce(ctx context.Context) error {
 		MinVersion: tls.VersionTLS12,
 	})
 	if err != nil {
-		// Fall back to plain TCP for development
-		plainConn, plainErr := dialer.DialContext(ctx, "tcp", addr)
-		if plainErr != nil {
-			return fmt.Errorf("connect: %w", err)
-		}
-		conn = nil
-		_ = conn
-		return c.runSession(ctx, plainConn)
+		return fmt.Errorf("connect: %w", err)
 	}
 
 	return c.runSession(ctx, conn)

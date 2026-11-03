@@ -13,7 +13,8 @@ type Config struct {
 	Token     string `yaml:"token"`
 	Port      int    `yaml:"port"`
 	Subdomain string `yaml:"subdomain"`
-	Mode      string `yaml:"mode"` // "http" or "tcp"
+	Mode      string `yaml:"mode"`     // "http" or "tcp"
+	Insecure  bool   `yaml:"insecure"` // plain TCP, for servers with tls_enabled: false
 }
 
 // DefaultConfig returns client defaults.

@@ -65,7 +65,7 @@ Start-Sleep -Seconds 1
 Write-Host "  [3/3] connecting tunnel client (port 3000)..." -ForegroundColor Yellow
 $clientLog  = "$env:TEMP\tunnel-client.log"
 $clientProc = Start-Process -FilePath $clientExe `
-    -ArgumentList "connect","--server","localhost:7000","--token","devtoken123","--port","3000","--subdomain","demo" `
+    -ArgumentList "connect","--server","localhost:7000","--token","devtoken123","--port","3000","--subdomain","demo","--insecure" `
     -PassThru -NoNewWindow -RedirectStandardError $clientLog
 Start-Sleep -Seconds 2
 
@@ -134,5 +134,5 @@ Write-Host ""
 Write-Host "  To run manually, open 3 PowerShell windows:" -ForegroundColor White
 Write-Host "    1  .\bin\tunnel-server.exe --config server-dev.yaml" -ForegroundColor DarkGray
 Write-Host "    2  python -m http.server 3000" -ForegroundColor DarkGray
-Write-Host "    3  .\bin\tunnel.exe connect --server localhost:7000 --token devtoken123 --port 3000" -ForegroundColor DarkGray
+Write-Host "    3  .\bin\tunnel.exe connect --server localhost:7000 --token devtoken123 --port 3000 --insecure" -ForegroundColor DarkGray
 Write-Host ""
