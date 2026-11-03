@@ -29,15 +29,15 @@ tunnel.yourdomain.com    →  A  →  your.vps.ip
 git clone https://github.com/nopedal/gotunnel.git && cd gotunnel
 ```
 
-**3.** Copy the example config and set your domain and a secret token:
+**3.** Copy the example config and set your domain and a secret token (generate one with `openssl rand -hex 32`):
 
 ```
-cp server.yaml /etc/tunnel/server.yaml
+cp server.yaml.example server.yaml
 ```
 
 ```yaml
 domain: tunnel.yourdomain.com
-token: $(openssl rand -hex 32)
+token: <output of openssl rand -hex 32>
 control_port: 7000
 http_port: 80
 https_port: 443
@@ -55,7 +55,7 @@ Or build from source:
 
 ```
 make build
-./bin/tunnel-server --config /etc/tunnel/server.yaml
+./bin/tunnel-server --config server.yaml
 ```
 
 **5.** On your local machine, install the client:

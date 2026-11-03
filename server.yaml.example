@@ -1,0 +1,10 @@
+# Copy to server.yaml, then set domain and token.
+# Generate a token with: openssl rand -hex 32
+domain: tunnel.yourdomain.com
+token: change-me
+control_port: 7000
+http_port: 80
+https_port: 443
+max_clients: 50
+cert_dir: /var/lib/tunnel/certs
+tls_enabled: true
