@@ -14,8 +14,8 @@ import (
 
 	"github.com/hashicorp/yamux"
 
-	"github.com/gotunnel/tunnel/internal/proto"
-	tunnelpkg "github.com/gotunnel/tunnel/internal/tunnel"
+	"github.com/nopedal/gotunnel/internal/proto"
+	tunnelpkg "github.com/nopedal/gotunnel/internal/tunnel"
 )
 
 const version = "0.1.0"

@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/gotunnel/tunnel/internal/client"
+	"github.com/nopedal/gotunnel/internal/client"
 )
 
 var (

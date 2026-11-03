@@ -26,7 +26,7 @@ tunnel.yourdomain.com    →  A  →  your.vps.ip
 **2.** Clone this repo on the server:
 
 ```
-git clone https://github.com/gotunnel/tunnel.git && cd tunnel
+git clone https://github.com/nopedal/gotunnel.git && cd gotunnel
 ```
 
 **3.** Copy the example config and set your domain and a secret token:
@@ -59,6 +59,12 @@ make build
 ```
 
 **5.** On your local machine, install the client:
+
+```
+go install github.com/nopedal/gotunnel/cmd/tunnel@latest
+```
+
+Or build it from a clone:
 
 ```
 make client

@@ -11,7 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 
-	"github.com/gotunnel/tunnel/internal/server"
+	"github.com/nopedal/gotunnel/internal/server"
 )
 
 var (

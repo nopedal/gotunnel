@@ -1,4 +1,4 @@
-module github.com/gotunnel/tunnel
+module github.com/nopedal/gotunnel
 
 go 1.22.0
 
