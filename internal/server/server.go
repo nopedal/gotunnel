@@ -43,7 +43,8 @@ func New(cfg *Config, log zerolog.Logger) *Server {
 	}
 }
 
-// Run starts all listeners and blocks until the context is cancelled.
+// Run starts all listeners and blocks until the context is cancelled, which
+// is a normal shutdown and returns nil, or a listener fails.
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 3)
 
@@ -79,7 +80,7 @@ func (s *Server) Run(ctx context.Context) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil
 	}
 }
 
