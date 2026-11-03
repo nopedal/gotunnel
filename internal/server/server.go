@@ -267,16 +267,24 @@ func (s *Server) listenHTTP(ctx context.Context) error {
 }
 
 // certManager returns the ACME manager for the tunnel domain and its
-// subdomains.
+// subdomains. Certificates are only requested for the base domain and for
+// subdomains with an active tunnel: the wildcard DNS record sends every name
+// to this server, so allowing any subdomain would let anyone burn through
+// the domain's Let's Encrypt quota by connecting with random SNI names.
 func (s *Server) certManager() *autocert.Manager {
 	return &autocert.Manager{
 		Prompt: autocert.AcceptTOS,
 		Cache:  autocert.DirCache(s.cfg.CertDir),
 		HostPolicy: func(_ context.Context, host string) error {
-			if !strings.HasSuffix(host, "."+s.cfg.Domain) && host != s.cfg.Domain {
-				return fmt.Errorf("host %q not allowed", host)
+			if host == s.cfg.Domain {
+				return nil
 			}
-			return nil
+			if sub, ok := strings.CutSuffix(host, "."+s.cfg.Domain); ok {
+				if _, active := s.registry.Lookup(sub); active {
+					return nil
+				}
+			}
+			return fmt.Errorf("host %q not allowed", host)
 		},
 	}
 }

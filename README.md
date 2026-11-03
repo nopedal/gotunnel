@@ -1,6 +1,6 @@
 # tunnel
 
-A self-hosted reverse tunnel. Expose any localhost port to the public internet through your own server. No account required, no rate limits, no vendor lock-in.
+A self-hosted reverse tunnel. Expose any localhost port to the public internet through your own server. No account required, no vendor lock-in.
 
 ## How it works
 
@@ -13,6 +13,12 @@ localhost:3000                              swift-arch-4f2a.tunnel.yourdomain.co
 ```
 
 The client opens a persistent multiplexed connection (yamux over TLS) to your server. When traffic hits the server on a subdomain, it's forwarded through that connection to your local port. Response flows back the same way.
+
+### Certificates and limits
+
+With `tls_enabled: true` the server obtains certificates from Let's Encrypt on demand: one for the base domain, and one for each tunnel subdomain the first time it is visited over HTTPS. Names without an active tunnel are refused, so random subdomains can't trigger certificate requests. Let's Encrypt's [rate limits](https://letsencrypt.org/docs/rate-limits/) still apply (currently 50 new certificates per registered domain per week), so prefer reusing names with `--subdomain` over generating a new random one for every session; certificates are cached in `cert_dir` and reused.
+
+The server also limits each IP to a burst of 5 control connections (then one every 12 seconds) and caps concurrent tunnels at `max_clients`.
 
 ## Self-hosting in 8 steps
 
