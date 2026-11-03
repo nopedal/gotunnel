@@ -1,5 +1,8 @@
 # ── binaries ─────────────────────────────────────────────────────────────────
 bin/
+/tunnel
+/tunnel-server
+*-go-tmp-umask
 *.exe
 *.dll
 *.so
