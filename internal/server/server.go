@@ -19,8 +19,8 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/time/rate"
 
-	"github.com/gotunnel/tunnel/internal/proto"
-	tunnelpkg "github.com/gotunnel/tunnel/internal/tunnel"
+	"github.com/nopedal/gotunnel/internal/proto"
+	tunnelpkg "github.com/nopedal/gotunnel/internal/tunnel"
 )
 
 // Server is the tunnel server.
