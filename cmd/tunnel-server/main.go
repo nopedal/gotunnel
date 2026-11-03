@@ -28,6 +28,9 @@ func main() {
 		Short: "Self-hosted tunnel server",
 		Long:  "A lightweight reverse tunnel server. Expose localhost to the internet with zero account friction.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Flags parsed fine; a runtime error (e.g. a port already in
+			// use) should not be followed by the usage text.
+			cmd.SilenceUsage = true
 			return runServer(configPath)
 		},
 	}

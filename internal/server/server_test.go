@@ -82,13 +82,19 @@ func TestHTTPSTLSConfigNegotiatesACMEALPN(t *testing.T) {
 	}
 }
 
-func TestControlListenerUsesTLS(t *testing.T) {
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+// freePort returns a TCP port that was free a moment ago.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func TestControlListenerUsesTLS(t *testing.T) {
+	port := freePort(t)
 
 	s := New(&Config{
 		Domain:      "tunnel.test",
@@ -105,6 +111,7 @@ func TestControlListenerUsesTLS(t *testing.T) {
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	var conn *tls.Conn
+	var err error
 	for deadline := time.Now().Add(2 * time.Second); ; {
 		conn, err = tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
 		if err == nil {
@@ -139,5 +146,47 @@ func TestControlListenerUsesTLS(t *testing.T) {
 	}
 	if msgType != proto.TypeAuthResponse || !resp.OK {
 		t.Fatalf("auth over TLS failed: type=%d resp=%+v", msgType, resp)
+	}
+}
+
+// SIGINT/SIGTERM cancel the context; that is a clean shutdown, not an error
+// (otherwise the CLI prints "Error: context canceled" and exits 1).
+func TestRunReturnsNilOnShutdown(t *testing.T) {
+	httpPort := freePort(t)
+	s := New(&Config{
+		Domain:      "tunnel.test",
+		Token:       "secret",
+		ControlPort: freePort(t),
+		HTTPPort:    httpPort,
+		MaxClients:  1,
+	}, zerolog.Nop())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+
+	healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", httpPort)
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		req, _ := http.NewRequest(http.MethodGet, healthURL, nil)
+		req.Host = "tunnel.test"
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("server did not come up: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned %v after cancellation, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancellation")
 	}
 }

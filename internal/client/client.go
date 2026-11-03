@@ -31,7 +31,8 @@ func New(cfg *Config) *Client {
 	return &Client{cfg: cfg}
 }
 
-// Connect establishes the tunnel and blocks, serving requests.
+// Connect establishes the tunnel and blocks, serving requests and
+// reconnecting as needed, until ctx is cancelled.
 func (c *Client) Connect(ctx context.Context) error {
 	var backoff time.Duration
 	maxBackoff := 30 * time.Second
@@ -39,7 +40,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	for {
 		err := c.connectOnce(ctx)
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return nil
 		}
 
 		if backoff == 0 {
@@ -57,7 +58,7 @@ func (c *Client) Connect(ctx context.Context) error {
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		}
 	}
 }

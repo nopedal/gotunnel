@@ -69,3 +69,29 @@ func TestConnectDoesNotFallBackToPlaintext(t *testing.T) {
 		t.Error("token was sent in plaintext")
 	}
 }
+
+// Ctrl-C cancels the context; Connect must treat that as a clean exit.
+func TestConnectReturnsNilWhenCancelled(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close() // nothing listening: every attempt fails and Connect backs off
+
+	c := New(&Config{Server: addr, Token: "t", Port: 3000, Insecure: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- c.Connect(ctx) }()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Connect returned %v after cancellation, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Connect did not return after cancellation")
+	}
+}
