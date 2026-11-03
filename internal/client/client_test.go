@@ -5,9 +5,15 @@ import (
 	"context"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/yamux"
+
+	"github.com/nopedal/gotunnel/internal/proto"
+	tunnelpkg "github.com/nopedal/gotunnel/internal/tunnel"
 )
 
 // If the TLS handshake fails (a plaintext server, or an attacker interfering
@@ -93,5 +99,46 @@ func TestConnectReturnsNilWhenCancelled(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Connect did not return after cancellation")
+	}
+}
+
+// A reply of the wrong type (e.g. a mismatched server version) must not be
+// decoded as a tunnel response: an {"ok":true} payload would otherwise look
+// like a successful tunnel with an empty URL.
+func TestConnectRejectsUnexpectedTunnelResponseType(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		session, err := yamux.Server(conn, tunnelpkg.YamuxConfig())
+		if err != nil {
+			return
+		}
+		defer session.Close()
+		ctrl, err := session.Accept()
+		if err != nil {
+			return
+		}
+		proto.ReadMessage(ctrl) // auth request
+		proto.WriteMessage(ctrl, proto.TypeAuthResponse, &proto.AuthResponse{OK: true})
+		proto.ReadMessage(ctrl) // tunnel request
+		proto.WriteMessage(ctrl, proto.TypeAuthResponse, &proto.AuthResponse{OK: true})
+		<-session.CloseChan()
+	}()
+
+	c := New(&Config{Server: ln.Addr().String(), Token: "t", Port: 3000, Insecure: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err = c.connectOnce(ctx)
+	if err == nil || !strings.Contains(err.Error(), "unexpected message type") {
+		t.Fatalf("connectOnce error = %v, want unexpected message type", err)
 	}
 }

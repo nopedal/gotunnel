@@ -155,6 +155,9 @@ func (c *Client) runSession(ctx context.Context, conn net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("read tunnel response: %w", err)
 	}
+	if msgType != proto.TypeTunnelResponse {
+		return fmt.Errorf("unexpected message type: %d", msgType)
+	}
 
 	var tunResp proto.TunnelResponse
 	if err := proto.Decode(data, &tunResp); err != nil {
