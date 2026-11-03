@@ -29,6 +29,7 @@ func main() {
 
 	var serverFlag, tokenFlag, subdomainFlag, modeFlag string
 	var portFlag int
+	var insecureFlag bool
 
 	connectCmd := &cobra.Command{
 		Use:   "connect",
@@ -52,6 +53,9 @@ func main() {
 			}
 			if modeFlag != "" {
 				cfg.Mode = modeFlag
+			}
+			if insecureFlag {
+				cfg.Insecure = true
 			}
 
 			// Env var fallback for token
@@ -78,6 +82,7 @@ func main() {
 	connectCmd.Flags().IntVar(&portFlag, "port", 0, "local port to expose")
 	connectCmd.Flags().StringVar(&subdomainFlag, "subdomain", "", "request a specific subdomain")
 	connectCmd.Flags().StringVar(&modeFlag, "mode", "http", "tunnel mode: http or tcp")
+	connectCmd.Flags().BoolVar(&insecureFlag, "insecure", false, "connect without TLS (only for servers with tls_enabled: false)")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",

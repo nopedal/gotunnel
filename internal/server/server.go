@@ -47,11 +47,24 @@ func New(cfg *Config, log zerolog.Logger) *Server {
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 3)
 
-	go func() { errCh <- s.listenControl(ctx) }()
+	// The HTTPS and control listeners share one certificate manager:
+	// tls-alpn-01 challenges are answered on the HTTPS port, so the manager
+	// requesting a certificate must be the one serving that port.
+	var certs *autocert.Manager
+	var controlTLS *tls.Config
+	if s.cfg.TLSEnabled {
+		certs = s.certManager()
+		controlTLS = &tls.Config{
+			GetCertificate: certs.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}
+	}
+
+	go func() { errCh <- s.listenControl(ctx, controlTLS) }()
 	go func() { errCh <- s.listenHTTP(ctx) }()
 
 	if s.cfg.TLSEnabled {
-		go func() { errCh <- s.listenHTTPS(ctx) }()
+		go func() { errCh <- s.listenHTTPS(ctx, certs) }()
 	}
 
 	s.log.Info().
@@ -70,15 +83,20 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-func (s *Server) listenControl(ctx context.Context) error {
+// listenControl accepts client connections. When tlsCfg is non-nil the
+// connections are TLS, so the auth token and tunnel traffic are encrypted.
+func (s *Server) listenControl(ctx context.Context, tlsCfg *tls.Config) error {
 	addr := fmt.Sprintf(":%d", s.cfg.ControlPort)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("control listen: %w", err)
 	}
+	if tlsCfg != nil {
+		ln = tls.NewListener(ln, tlsCfg)
+	}
 	defer ln.Close()
 
-	s.log.Info().Str("addr", addr).Msg("control listener ready")
+	s.log.Info().Str("addr", addr).Bool("tls", tlsCfg != nil).Msg("control listener ready")
 
 	go func() {
 		<-ctx.Done()
@@ -247,8 +265,10 @@ func (s *Server) listenHTTP(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) listenHTTPS(ctx context.Context) error {
-	m := &autocert.Manager{
+// certManager returns the ACME manager for the tunnel domain and its
+// subdomains.
+func (s *Server) certManager() *autocert.Manager {
+	return &autocert.Manager{
 		Prompt: autocert.AcceptTOS,
 		Cache:  autocert.DirCache(s.cfg.CertDir),
 		HostPolicy: func(_ context.Context, host string) error {
@@ -258,7 +278,9 @@ func (s *Server) listenHTTPS(ctx context.Context) error {
 			return nil
 		},
 	}
+}
 
+func (s *Server) listenHTTPS(ctx context.Context, m *autocert.Manager) error {
 	addr := fmt.Sprintf(":%d", s.cfg.HTTPSPort)
 	srv := &http.Server{
 		Addr:         addr,

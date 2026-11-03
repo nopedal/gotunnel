@@ -1,20 +1,27 @@
 package server
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/hashicorp/yamux"
+	"github.com/rs/zerolog"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
+
+	"github.com/nopedal/gotunnel/internal/proto"
+	tunnelpkg "github.com/nopedal/gotunnel/internal/tunnel"
 )
 
 // selfSignedCert returns a throwaway certificate for handshake tests.
@@ -72,5 +79,65 @@ func TestHTTPSTLSConfigNegotiatesACMEALPN(t *testing.T) {
 
 	if got := conn.ConnectionState().NegotiatedProtocol; got != acme.ALPNProto {
 		t.Fatalf("negotiated protocol = %q, want %q", got, acme.ALPNProto)
+	}
+}
+
+func TestControlListenerUsesTLS(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	s := New(&Config{
+		Domain:      "tunnel.test",
+		Token:       "secret",
+		ControlPort: port,
+		MaxClients:  1,
+		TLSEnabled:  true,
+	}, zerolog.Nop())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cert := selfSignedCert(t)
+	go s.listenControl(ctx, &tls.Config{Certificates: []tls.Certificate{cert}})
+
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	var conn *tls.Conn
+	for deadline := time.Now().Add(2 * time.Second); ; {
+		conn, err = tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true})
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("TLS dial to control port: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	session, err := yamux.Client(conn, tunnelpkg.YamuxConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	ctrl, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := proto.WriteMessage(ctrl, proto.TypeAuthRequest, &proto.AuthRequest{Token: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+	msgType, data, err := proto.ReadMessage(ctrl)
+	if err != nil {
+		t.Fatalf("read auth response: %v", err)
+	}
+	var resp proto.AuthResponse
+	if err := proto.Decode(data, &resp); err != nil {
+		t.Fatal(err)
+	}
+	if msgType != proto.TypeAuthResponse || !resp.OK {
+		t.Fatalf("auth over TLS failed: type=%d resp=%+v", msgType, resp)
 	}
 }
