@@ -63,6 +63,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	go func() { errCh <- s.listenControl(ctx, controlTLS) }()
 	go func() { errCh <- s.listenHTTP(ctx) }()
+	go s.pruneLimitersLoop(ctx, time.Minute)
 
 	if s.cfg.TLSEnabled {
 		go func() { errCh <- s.listenHTTPS(ctx, certs) }()
@@ -128,6 +129,33 @@ func (s *Server) getLimiter(ip string) *rate.Limiter {
 	lim := rate.NewLimiter(rate.Every(12*time.Second), 5)
 	s.rateLimit[ip] = lim
 	return lim
+}
+
+// pruneLimiters forgets limiters that have refilled to their full burst.
+// A new limiter starts full, so dropping them changes nothing for those
+// IPs, but it keeps the map from growing with every address that has ever
+// connected to the control port.
+func (s *Server) pruneLimiters(now time.Time) {
+	s.rateMu.Lock()
+	defer s.rateMu.Unlock()
+	for ip, lim := range s.rateLimit {
+		if lim.TokensAt(now) >= float64(lim.Burst()) {
+			delete(s.rateLimit, ip)
+		}
+	}
+}
+
+func (s *Server) pruneLimitersLoop(ctx context.Context, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.pruneLimiters(now)
+		}
+	}
 }
 
 func (s *Server) handleControl(_ context.Context, conn net.Conn) {
