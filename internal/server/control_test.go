@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/yamux"
 	"github.com/rs/zerolog"
@@ -93,5 +95,29 @@ func TestInvalidRequestedSubdomainIsRejected(t *testing.T) {
 	}
 	if s.registry.Count() != 0 {
 		t.Fatalf("registry has %d tunnels, want 0", s.registry.Count())
+	}
+}
+
+func TestPruneLimitersDropsOnlyIdleEntries(t *testing.T) {
+	s := New(&Config{Domain: "tunnel.test", Token: "secret"}, zerolog.Nop())
+
+	// Every address that ever connects gets a limiter.
+	for i := 0; i < 1000; i++ {
+		s.getLimiter(fmt.Sprintf("2001:db8::%x", i)).Allow()
+	}
+	// This one has used its whole burst and must stay limited.
+	busy := s.getLimiter("192.0.2.1")
+	for busy.Allow() {
+	}
+
+	// 15s later the single-connection addresses have refilled; the busy
+	// one has earned back about one token.
+	s.pruneLimiters(time.Now().Add(15 * time.Second))
+
+	if n := len(s.rateLimit); n != 1 {
+		t.Fatalf("%d limiters left after prune, want 1", n)
+	}
+	if s.getLimiter("192.0.2.1") != busy {
+		t.Fatal("prune dropped the limiter of an address that is still rate limited")
 	}
 }
